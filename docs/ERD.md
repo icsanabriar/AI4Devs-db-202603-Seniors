@@ -79,10 +79,10 @@ erDiagram
      COMPANY ||--o{ POSITION : offers
      POSITION ||--|| INTERVIEW_FLOW : assigns
      INTERVIEW_FLOW ||--o{ INTERVIEW_STEP : contains
-     INTERVIEW_STEP ||--|| INTERVIEW_TYPE : uses
+     INTERVIEW_STEP }o--|| INTERVIEW_TYPE : uses
      POSITION ||--o{ APPLICATION : receives
      CANDIDATE ||--o{ APPLICATION : submits
      APPLICATION ||--o{ INTERVIEW : has
-     INTERVIEW ||--|| INTERVIEW_STEP : consists_of
+     INTERVIEW }o--|| INTERVIEW_STEP : consists_of
      EMPLOYEE ||--o{ INTERVIEW : conducts
 ```

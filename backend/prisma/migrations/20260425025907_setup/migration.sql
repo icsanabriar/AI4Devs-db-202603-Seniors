@@ -4,8 +4,8 @@ CREATE TABLE "Candidate" (
     "firstName" VARCHAR(100) NOT NULL,
     "lastName" VARCHAR(100) NOT NULL,
     "email" VARCHAR(255) NOT NULL,
-    "phone" VARCHAR(15),
-    "address" VARCHAR(100),
+    "phone" VARCHAR(32),
+    "address" VARCHAR(255),
 
     CONSTRAINT "Candidate_pkey" PRIMARY KEY ("id")
 );

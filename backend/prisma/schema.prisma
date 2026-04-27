@@ -18,8 +18,8 @@ model Candidate {
   firstName       String           @db.VarChar(100)
   lastName        String           @db.VarChar(100)
   email           String           @unique @db.VarChar(255)
-  phone           String?          @db.VarChar(15)
-  address         String?          @db.VarChar(100)
+  phone           String?          @db.VarChar(32)
+  address         String?          @db.VarChar(255)
   educations      Education[]
   workExperiences WorkExperience[]
   resumes         Resume[]
@@ -160,6 +160,9 @@ model Position {
   @@index([status, isVisible])
 }
 
+/// At most one job application per candidate per position (`@@unique` below). That
+/// blocks a second row for the same pair; step-level retakes use `Interview.attempt`, not
+/// multiple `Application` rows. See docs/prisma-migration-report.md and docs/audit-refactor.md.
 model Application {
   id              Int         @id @default(autoincrement())
   positionId      Int
@@ -190,7 +193,10 @@ model Interview {
   application     Application   @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   interviewStepId Int
   interviewStep   InterviewStep @relation(fields: [interviewStepId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  /// Retakes: same (application, step) when attempt is 2+ (1-based).
+  /// 1-based attempt per (application, step). Retakes = a new row with a higher `attempt`.
+  /// `@@default(1)` does not choose the next value on retake: callers MUST set `attempt` to
+  /// max(existing for this `applicationId` + `interviewStepId`) + 1 (see
+  /// `getNextInterviewAttempt` in the backend) or inserts will hit P2002 on the unique.
   attempt         Int           @default(1)
   employeeId      Int
   employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Restrict, onUpdate: Cascade)

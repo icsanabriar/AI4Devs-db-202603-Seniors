@@ -4,6 +4,7 @@
  * Env:  DATABASE_URL (full URL) or root .env DB_USER/DB_PASSWORD/DB_NAME/DB_PORT
  */
 import { PrismaClient, Prisma } from "@prisma/client";
+import { getNextInterviewAttempt } from "../src/application/services/getNextInterviewAttempt";
 import { config } from "dotenv";
 import * as path from "path";
 import * as fs from "fs";
@@ -112,75 +113,121 @@ async function main() {
   }
 
   const typeIds = types.map((t) => t.id);
+
+  const COMPANY_SEED_CONCURRENCY = 4;
+
+  type PositionMetaRow = {
+    id: number;
+    companyId: number;
+    flowId: number;
+    firstStepId: number;
+    stepIds: number[];
+  };
+
+  async function seedOneCompany(c: number): Promise<{
+    companyId: number;
+    employeeIds: number[];
+    positionMeta: PositionMetaRow[];
+  }> {
+    const comp = await prisma.company.create({
+      data: { name: `${B} Co ${c + 1} — ${TIER} dataset` },
+    });
+    const companyId = comp.id;
+
+    const employeeData = Array.from({ length: spec.employeesPerCompany }, (_, e) => ({
+      companyId,
+      name: `Employee ${B}-${companyId}-${e}`,
+      email: `emp.${B}.${companyId}.${e}@example.com`,
+      role: e % 3 === 0 ? "HiringManager" : e % 3 === 1 ? "Recruiter" : "IC",
+    }));
+    const employees = await prisma.employee.createManyAndReturn({ data: employeeData });
+    const employeeIds = employees.map((e) => e.id);
+
+    const flowData = Array.from({ length: spec.positionsPerCompany }, (_, p) => ({
+      description: `Flow ${B} company ${companyId} pos ${p}`,
+    }));
+    const flows = await prisma.interviewFlow.createManyAndReturn({ data: flowData });
+
+    const stepRows: {
+      interviewFlowId: number;
+      interviewTypeId: number;
+      name: string;
+      orderIndex: number;
+    }[] = [];
+    for (let p = 0; p < flows.length; p++) {
+      const flow = flows[p]!;
+      for (let s = 0; s < spec.stepsPerFlow; s++) {
+        const ti = (s + p) % typeIds.length;
+        stepRows.push({
+          interviewFlowId: flow.id,
+          interviewTypeId: typeIds[ti]!,
+          name: `Step ${s + 1} (${typeNames[ti]})`,
+          orderIndex: s + 1,
+        });
+      }
+    }
+    const allSteps = await prisma.interviewStep.createManyAndReturn({ data: stepRows });
+
+    const firstStepIdByPos: number[] = [];
+    const stepIdsByPos: number[][] = [];
+    for (let p = 0; p < spec.positionsPerCompany; p++) {
+      const chunk = allSteps.slice(p * spec.stepsPerFlow, (p + 1) * spec.stepsPerFlow);
+      const sids = chunk.map((st) => st.id);
+      stepIdsByPos.push(sids);
+      firstStepIdByPos.push(sids[0]!);
+    }
+
+    // Isolated LCG for salaries (global `rand` is advanced in bulk after all companies)
+    const salaryRng = makeRand(0x2f6a4b1d + c * 0x1f4d);
+    const positionData = Array.from({ length: spec.positionsPerCompany }, (_, p) => ({
+      companyId,
+      interviewFlowId: flows[p]!.id,
+      title: `Senior Software Engineer — ${B} ${c + 1}-${p + 1}`,
+      description: "Full-time role (seeded).",
+      status: p % 4 === 0 ? "open" : p % 4 === 1 ? "pausing" : "open",
+      isVisible: p % 5 !== 0,
+      location: c % 2 === 0 ? "Remote" : "Madrid",
+      employmentType: "full_time",
+      salaryMin: new Prisma.Decimal("65000.00").add(
+        new Prisma.Decimal(Math.floor(salaryRng() * 20000).toString())
+      ),
+      salaryMax: new Prisma.Decimal("120000.00").add(
+        new Prisma.Decimal(Math.floor(salaryRng() * 20000).toString())
+      ),
+      applicationDeadline: new Date(2026, 5, 15 + p),
+    }));
+    const positions = await prisma.position.createManyAndReturn({ data: positionData });
+
+    const positionMeta: PositionMetaRow[] = positions.map((pos, p) => ({
+      id: pos.id,
+      companyId,
+      flowId: flows[p]!.id,
+      firstStepId: firstStepIdByPos[p]!,
+      stepIds: stepIdsByPos[p]!,
+    }));
+
+    return { companyId, employeeIds, positionMeta };
+  }
+
   const companyIds: number[] = [];
   const companyEmployeeIds: Map<number, number[]> = new Map();
-  const positionMeta: { id: number; companyId: number; flowId: number; firstStepId: number; stepIds: number[] }[] = [];
+  const positionMeta: PositionMetaRow[] = [];
 
-  for (let c = 0; c < spec.companies; c++) {
-    const comp = await prisma.company.create({
-      data: {
-        name: `${B} Co ${c + 1} — ${TIER} dataset`,
-      },
-    });
-    companyIds.push(comp.id);
-    const emps: number[] = [];
-    for (let e = 0; e < spec.employeesPerCompany; e++) {
-      const emp = await prisma.employee.create({
-        data: {
-          companyId: comp.id,
-          name: `Employee ${B}-${comp.id}-${e}`,
-          email: `emp.${B}.${comp.id}.${e}@example.com`,
-          role: e % 3 === 0 ? "HiringManager" : e % 3 === 1 ? "Recruiter" : "IC",
-        },
-      });
-      emps.push(emp.id);
+  for (let start = 0; start < spec.companies; start += COMPANY_SEED_CONCURRENCY) {
+    const batch = [] as number[];
+    for (let c = start; c < start + COMPANY_SEED_CONCURRENCY && c < spec.companies; c++) {
+      batch.push(c);
     }
-    companyEmployeeIds.set(comp.id, emps);
+    const batchOut = await Promise.all(batch.map((c) => seedOneCompany(c)));
+    for (const r of batchOut) {
+      companyIds.push(r.companyId);
+      companyEmployeeIds.set(r.companyId, r.employeeIds);
+      positionMeta.push(...r.positionMeta);
+    }
+  }
 
-    for (let p = 0; p < spec.positionsPerCompany; p++) {
-      const flow = await prisma.interviewFlow.create({
-        data: { description: `Flow ${B} company ${comp.id} pos ${p}` },
-      });
-      const stepIds: number[] = [];
-      for (let s = 0; s < spec.stepsPerFlow; s++) {
-        const st = await prisma.interviewStep.create({
-          data: {
-            interviewFlowId: flow.id,
-            interviewTypeId: typeIds[(s + p) % typeIds.length],
-            name: `Step ${s + 1} (${typeNames[(s + p) % typeIds.length]})`,
-            orderIndex: s + 1,
-          },
-        });
-        stepIds.push(st.id);
-      }
-      const firstStepId = stepIds[0]!;
-      const pos = await prisma.position.create({
-        data: {
-          companyId: comp.id,
-          interviewFlowId: flow.id,
-          title: `Senior Software Engineer — ${B} ${c + 1}-${p + 1}`,
-          description: "Full-time role (seeded).",
-          status: p % 4 === 0 ? "open" : p % 4 === 1 ? "pausing" : "open",
-          isVisible: p % 5 !== 0,
-          location: c % 2 === 0 ? "Remote" : "Madrid",
-          employmentType: "full_time",
-          salaryMin: new Prisma.Decimal("65000.00").add(
-            new Prisma.Decimal(Math.floor(rand() * 20000).toString())
-          ),
-          salaryMax: new Prisma.Decimal("120000.00").add(
-            new Prisma.Decimal(Math.floor(rand() * 20000).toString())
-          ),
-          applicationDeadline: new Date(2026, 5, 15 + p),
-        },
-      });
-      positionMeta.push({
-        id: pos.id,
-        companyId: comp.id,
-        flowId: flow.id,
-        firstStepId,
-        stepIds,
-      });
-    }
+  for (let k = 0; k < 2 * spec.companies * spec.positionsPerCompany; k++) {
+    rand();
   }
 
   const allPositionIds = positionMeta.map((m) => m.id);
@@ -276,10 +323,15 @@ async function main() {
     const emps = companyEmployeeIds.get(meta.companyId) ?? [];
     if (emps.length === 0) continue;
     const employeeId = emps[Math.floor(rand() * emps.length)]!;
+    const attempt = await getNextInterviewAttempt(
+      prisma,
+      app.id,
+      meta.firstStepId
+    );
     interviewRows.push({
       applicationId: app.id,
       interviewStepId: meta.firstStepId,
-      attempt: 1,
+      attempt,
       employeeId,
       interviewDate: new Date(2025, 6 + (app.id % 4), 5 + (app.id % 20)),
       result: pickn(["strong_hire", "hire", "no_hire", "pending"], 1)[0]!,
