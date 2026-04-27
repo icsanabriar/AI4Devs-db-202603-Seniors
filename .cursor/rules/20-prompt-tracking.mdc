@@ -1,0 +1,128 @@
+---
+description: Mandatory append-only user prompt log (path, format, failure behavior).
+alwaysApply: true
+---
+
+# Prompt Tracking
+
+## Purpose
+
+Guarantee an **append-only**, **auditable** log of user prompts so course reviewers and maintainers can reproduce how AI assistance was used.
+
+## Scope
+
+- **Global (this repository):** every assistant turn that produces a user-visible reply in this workspace.
+- **Project-specific path:** log file inside the docs folder — **`prompts/prompts-ICS.md`**
+
+## Requirements
+
+1. After **every** user message the assistant answers (including short follow-ups), the assistant MUST persist that user message to **`prompts/prompts-ICS.md`** using a **real filesystem write** in the **same turn** as the reply.
+2. The assistant MUST create the directory **`prompts/`** and the file **`prompts/prompts-ICS.md`** if they do not exist. All prompt log writes MUST **initialize** (when first creating **`prompts/prompts-ICS.md`**) and **append-only** strictly to **`prompts/prompts-ICS.md`**.
+3. **Timestamp:** MUST use **UTC** in ISO 8601 in the heading: `YYYY-MM-DDTHH:mm:ssZ`. If message-specific time is unavailable, MUST use **current UTC** at write time. MUST NOT skip logging for lack of exact message time.
+4. **Agent label:** MUST set `### Agent:` using the **Agent derivation table** below. The assistant MUST derive the label from the session context: if the session was invoked via a specific agent file (e.g. `@.cursor/agents/system-architect.md`), use the agent file name without the `.md` extension (e.g. `system-architect`). If no specific agent was invoked, use the Cursor interaction mode (`Agent`, `Chat`, `Ask`). `Composer` is a deprecated alias for `Agent` — always use `Agent` instead. If unknown, MUST use `Cursor (unspecified mode)`.
+5. **Model label:** MUST set `#### Model:` to the model identifier used for the reply. The assistant MUST derive the model from its own system identification (e.g. `powered by claude-4.6-opus` → `Opus 4.6`). Use the **Model derivation table** below to map internal identifiers to display labels. Only use `unknown` as a last resort when the system prompt contains no model identifier at all — this should be rare.
+6. **Redaction:** MUST apply **Redaction policy** before writing the body.
+7. **File initialization:** If **`prompts/prompts-ICS.md`** is missing, MUST create it with exactly this first line, then a blank line:
+   `# Prompts log`
+8. **Append semantics:** MUST append exactly **one** new block at the **end** of the file:
+   - If there is already content **after** the header line, MUST insert a single line containing only **`---`** immediately **before** the new block.
+   - MUST NOT place **`---`** as the first line of the file.
+9. **Append-only:** MUST NOT delete, reorder, or rewrite previous entries; MUST only add to the end.
+
+## Model derivation table
+
+The assistant MUST inspect its own system prompt for model identifiers and map them using this table. Match the **first** row whose pattern appears in the system identification string.
+
+| System identification pattern | Display label |
+|---|---|
+| `claude-4.6-opus` | `Opus 4.6` |
+| `claude-4-opus` | `Opus 4` |
+| `claude-4-sonnet` or `claude-sonnet-4` | `Sonnet 4` |
+| `claude-3.7-sonnet` | `Sonnet 3.7` |
+| `claude-3.5-sonnet` | `Sonnet 3.5` |
+| `gpt-4o` | `GPT-4o` |
+| `gpt-4.1` | `GPT-4.1` |
+| `o3` | `o3` |
+| `gemini-2.5-pro` | `Gemini 2.5 Pro` |
+| `cursor-small` or `fast` model | `Cursor Small` |
+
+If the system prompt contains a model identifier not listed here, use the identifier as-is with reasonable formatting (e.g. `claude-next-version` → `Claude Next Version`). Only use `unknown` when no model identifier is present anywhere in the system context.
+
+## Agent derivation table
+
+The assistant MUST determine the agent label using the following priority order. Use the **first** rule that matches:
+
+| Priority | Condition | Agent label |
+|---|---|---|
+| 1 | Session invoked via `@.cursor/agents/<name>.md` | `<name>` (file name without `.md`) |
+| 2 | Running inside a subagent spawned by an agent file | The parent agent's `<name>` |
+| 3 | Cursor interaction mode is identifiable | `Agent`, `Chat`, or `Ask` |
+| 4 | None of the above apply | `Cursor (unspecified mode)` |
+
+## Entry format (required)
+
+```markdown
+## Prompt - <YYYY-MM-DDTHH:mm:ssZ>
+### Agent: <agent label>
+#### Model: <model identifier>
+
+<verbatim or redacted user prompt, multiple lines allowed>
+```
+
+Example (separator between this and a prior entry):
+
+```markdown
+---
+## Prompt - 2026-03-19T21:45:03Z
+### Agent: system-architect
+#### Model: Opus 4.6
+
+Summarize recent commits.
+```
+
+## Redaction policy (required)
+
+- MUST replace secrets or confidential fragments with `[REDACTED]` (optionally `[REDACTED: api-key]`).
+- MUST keep enough context that the intent of the prompt remains clear.
+- If the entire prompt is sensitive, MUST still write the heading lines and MUST use `[REDACTED]` as the body.
+
+## File rotation
+
+When `prompts/prompts-ICS.md` exceeds **500 entries**, the assistant SHOULD rename the existing file to `prompts/prompts-ICS-<YYYY-MM-DD>.md` (using the date of the oldest entry in the file) and start a new `prompts/prompts-ICS.md` with a fresh header.
+
+## Deliverable quality
+
+1. Content MUST be **readable** for reviewers (e.g. grouped by phase or artifact).
+2. Logging of **new** prompts MUST satisfy **Requirements** above (append-only, format, timestamps).
+
+## Failure behavior
+
+- If **no** file tool or write capability is available: logging is **excused** for that turn only. The assistant MAY complete the user-facing reply and MUST document in the reply that logging was excused for that turn.
+- If file tools **are** available: MUST NOT complete the user-facing reply **without** attempting the log write. MUST NOT silently skip logging.
+- If a write **fails** (error, permissions): MUST retry a reasonable alternative once (e.g. correct path), then MUST state in the reply that logging failed and the **exact path** attempted. MUST NOT claim the prompt was logged when it was not.
+- **Concurrent sessions:** If two Cursor sessions write to `prompts/prompts-ICS.md` simultaneously, each MUST read the current file content before appending. If a session detects that its append corrupted or overwrote another session's entry, it MUST notify the user immediately so the log can be repaired.
+
+## Prohibited behavior
+
+- MUST NOT batch multiple user messages into one entry unless they are **one** combined message from the user.
+- MUST NOT log assistant outputs in place of user prompts (this file is for **user** prompts).
+- MUST NOT duplicate the `# Prompts log` header mid-file.
+
+## Verification
+
+- [ ] Latest user message appears at the **end** of the correct **`prompts/prompts-ICS.md`**.
+- [ ] Newest entry has valid UTC heading and `### Agent:` line and `#### Model:` line.
+- [ ] Prior entries unchanged (append-only).
+
+## Operational note
+
+Rules do not execute themselves: assistants MUST invoke tools to write **`prompts/prompts-ICS.md`**. Treat steps in **Requirements** as a **checklist every reply**.
+
+## Extension points
+
+This rule is **Layer 1 (Core Framework)** with a project-specific agent table.
+
+- **Known agent files table** (Layer 3): replace with your project's agent roster.
+- **Model derivation table** (Layer 1): extend with new model identifiers as needed; existing rows are universal.
+- **Log file path** (`prompts/prompts-ICS.md`): change only if your `prompts/` layout differs from rule 20's Document locations table.
+- All other mechanics (append semantics, UTC timestamps, redaction, rotation, failure behavior) are **universal** — keep as-is.
