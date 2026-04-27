@@ -262,6 +262,7 @@ async function main() {
   const interviewRows: {
     applicationId: number;
     interviewStepId: number;
+    attempt: number;
     employeeId: number;
     interviewDate: Date;
     result: string;
@@ -278,6 +279,7 @@ async function main() {
     interviewRows.push({
       applicationId: app.id,
       interviewStepId: meta.firstStepId,
+      attempt: 1,
       employeeId,
       interviewDate: new Date(2025, 6 + (app.id % 4), 5 + (app.id % 20)),
       result: pickn(["strong_hire", "hire", "no_hire", "pending"], 1)[0]!,
@@ -301,6 +303,13 @@ async function main() {
   };
 
   console.log("Seeded row counts (this batch where applicable):", counts);
+
+  try {
+    await prisma.$executeRaw`REFRESH MATERIALIZED VIEW "ApplicationStatusSummary"`;
+    await prisma.$executeRaw`REFRESH MATERIALIZED VIEW "CompanyApplicationCount"`;
+  } catch (e) {
+    console.warn("Materialized view refresh skipped (not deployed yet?):", e);
+  }
 }
 
 main()

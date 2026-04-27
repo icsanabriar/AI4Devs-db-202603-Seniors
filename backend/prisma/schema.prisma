@@ -167,6 +167,7 @@ model Application {
   candidateId     Int
   candidate       Candidate   @relation(fields: [candidateId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   applicationDate DateTime    @db.Date
+  /// Allowed values are enforced in PostgreSQL (see migration: application_status_check).
   status          String      @db.VarChar(50)
   notes           String?     @db.Text
   createdAt       DateTime    @default(now())
@@ -177,6 +178,10 @@ model Application {
   @@index([positionId])
   @@index([candidateId])
   @@index([status])
+  // Keyset pagination and status-filtered lists (see docs/audit.md)
+  @@index([createdAt, id])
+  @@index([status, id])
+  @@index([status, candidateId])
 }
 
 model Interview {
@@ -185,6 +190,8 @@ model Interview {
   application     Application   @relation(fields: [applicationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   interviewStepId Int
   interviewStep   InterviewStep @relation(fields: [interviewStepId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  /// Retakes: same (application, step) when attempt is 2+ (1-based).
+  attempt         Int           @default(1)
   employeeId      Int
   employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   interviewDate   DateTime      @db.Date
@@ -194,7 +201,7 @@ model Interview {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  @@unique([applicationId, interviewStepId])
+  @@unique([applicationId, interviewStepId, attempt])
   @@index([applicationId])
   @@index([interviewStepId])
   @@index([employeeId])
