@@ -9,12 +9,18 @@
         "build": "tsc",
         "prisma:init": "npx prisma init",
         "prisma:generate": "npx prisma generate",
+    "prisma:seed:small": "SEED_TIER=small npx prisma db seed",
+    "prisma:seed:medium": "SEED_TIER=medium npx prisma db seed",
+    "prisma:seed:large": "SEED_TIER=large npx prisma db seed",
         "start:prod": "npm run build && npm start",
         "test": "jest" 
     },
     "keywords": [],
     "author": "",
     "license": "ISC",
+    "prisma": {
+        "seed": "npx ts-node --transpile-only prisma/seed.ts"
+    },
     "dependencies": {
         "@prisma/client": "^5.13.0",
         "cors": "^2.8.5",
