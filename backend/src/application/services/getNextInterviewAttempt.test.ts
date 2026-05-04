@@ -1,6 +1,16 @@
+/**
+ * Verifies {@link getNextInterviewAttempt} returns the next attempt from Prisma aggregate
+ * results: first interview uses `1`; subsequent rows use one greater than the stored maximum.
+ */
 import type { PrismaClient } from '@prisma/client';
 import { getNextInterviewAttempt } from './getNextInterviewAttempt';
 
+/**
+ * Prisma stub: `interview.aggregate` resolves as if `_max.attempt` were `attemptMax`
+ * (`null` means no rows, so the next attempt is `1`).
+ *
+ * @param attemptMax - Simulated maximum `Interview.attempt` for the queried pair, or `null` for none.
+ */
 function mockPrisma(attemptMax: number | null) {
   return {
     interview: {

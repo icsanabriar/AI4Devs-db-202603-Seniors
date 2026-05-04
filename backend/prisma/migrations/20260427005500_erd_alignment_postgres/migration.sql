@@ -1,3 +1,6 @@
+-- ERD alignment: recruitment domain (Company → Position, InterviewFlow, interviews, applications).
+-- Adds PostgreSQL tables and FKs matching `schema.prisma` and docs/ERD.md.
+
 -- CreateTable
 CREATE TABLE "Company" (
     "id" SERIAL NOT NULL,

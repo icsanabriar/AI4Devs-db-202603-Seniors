@@ -29,6 +29,7 @@ if (!["small", "medium", "large"].includes(TIER)) {
   throw new Error(`SEED_TIER must be small|medium|large, got: ${TIER}`);
 }
 
+/** Volume and shape of generated entities per `SEED_TIER` (companies, steps, candidates, etc.). */
 const SPECS: Record<
   SeedTier,
   {
@@ -73,6 +74,12 @@ const SPECS: Record<
 const spec = SPECS[TIER];
 const B = `perf-${TIER}`;
 
+/**
+ * Deterministic linear congruential PRNG for reproducible seed data (`seed` sets the sequence).
+ *
+ * @param seed - Initial state (unsigned 32-bit).
+ * @returns A function that yields pseudo-random values in `[0, 1)`.
+ */
 function makeRand(seed: number) {
   let s = seed >>> 0;
   return () => {
@@ -83,6 +90,9 @@ function makeRand(seed: number) {
 
 const rand = makeRand(TIER === "small" ? 0x2f6a4b1d : TIER === "medium" ? 0x5c9d2e7a : 0x8a1b3c4d);
 
+/**
+ * Fisher–Yates sample of up to `n` elements using the global tier RNG (shuffles a copy of `arr`).
+ */
 function pickn<T>(arr: T[], n: number) {
   const o = [...arr];
   for (let i = o.length - 1; i > 0; i--) {
@@ -92,6 +102,11 @@ function pickn<T>(arr: T[], n: number) {
   return o.slice(0, Math.min(n, o.length));
 }
 
+/**
+ * Orchestrates tiered seeding: interview types, companies (batched), candidates, applications,
+ * and first-step interviews using {@link getNextInterviewAttempt} for valid `attempt` values.
+ * Refreshes materialized views when present; failures there are logged and ignored.
+ */
 async function main() {
   console.log(`Seeding tier=${TIER} batch=${B}`);
 
@@ -116,6 +131,7 @@ async function main() {
 
   const COMPANY_SEED_CONCURRENCY = 4;
 
+  /** Per-position identifiers after seeding one company (used to attach applications and interviews). */
   type PositionMetaRow = {
     id: number;
     companyId: number;
@@ -124,6 +140,12 @@ async function main() {
     stepIds: number[];
   };
 
+  /**
+   * Seeds one company: employees, interview flows/steps/types, positions, and metadata used later
+   * for applications and interviews (first step id and full step id list per position).
+   *
+   * @param c - Zero-based company index within this run (feeds naming and isolated salary RNG).
+   */
   async function seedOneCompany(c: number): Promise<{
     companyId: number;
     employeeIds: number[];
@@ -233,6 +255,12 @@ async function main() {
   const allPositionIds = positionMeta.map((m) => m.id);
   const appStatuses = ["new", "screening", "interviewing", "offer", "rejected"] as const;
 
+  /**
+   * Inserts `count` synthetic candidates with emails keyed by batch id `B`, chunked for large tiers.
+   *
+   * @param startIndex - Starting suffix for deterministic names/emails (usually after max existing id).
+   * @param count - Number of candidate rows to create.
+   */
   const createCandidates = async (startIndex: number, count: number) => {
     const data = [] as {
       firstName: string;

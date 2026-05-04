@@ -13,6 +13,7 @@ datasource db {
 
 // --- Existing models (retained; DB is source of truth) ---
 
+/// Person applying for roles; links to education, work history, resumes, and applications.
 model Candidate {
   id              Int              @id @default(autoincrement())
   firstName       String           @db.VarChar(100)
@@ -28,6 +29,7 @@ model Candidate {
   @@index([lastName, firstName])
 }
 
+/// Academic history row attached to a candidate.
 model Education {
   id          Int       @id @default(autoincrement())
   institution String    @db.VarChar(100)
@@ -40,6 +42,7 @@ model Education {
   @@index([candidateId])
 }
 
+/// Prior employment row attached to a candidate.
 model WorkExperience {
   id          Int       @id @default(autoincrement())
   company     String    @db.VarChar(100)
@@ -53,6 +56,7 @@ model WorkExperience {
   @@index([candidateId])
 }
 
+/// Uploaded CV metadata (storage path + type) for a candidate.
 model Resume {
   id          Int       @id @default(autoincrement())
   filePath    String    @db.VarChar(500)
@@ -66,6 +70,7 @@ model Resume {
 
 // --- ERD: recruitment domain (docs/ERD.md) ---
 
+/// Organization that owns employees and open positions.
 model Company {
   id        Int        @id @default(autoincrement())
   name      String     @db.VarChar(255)
@@ -77,6 +82,7 @@ model Company {
   @@index([name])
 }
 
+/// Staff member who belongs to a company and may conduct interviews.
 model Employee {
   id         Int         @id @default(autoincrement())
   companyId  Int
@@ -94,6 +100,7 @@ model Employee {
   @@index([email])
 }
 
+/// Named interview category (e.g. phone screen, technical); reused across flow steps.
 model InterviewType {
   id          Int             @id @default(autoincrement())
   name        String          @db.VarChar(100)
@@ -105,6 +112,7 @@ model InterviewType {
   @@unique([name])
 }
 
+/// Ordered sequence of interview steps; typically one flow per open position.
 model InterviewFlow {
   id          Int             @id @default(autoincrement())
   description String          @db.VarChar(500)
@@ -114,6 +122,7 @@ model InterviewFlow {
   steps       InterviewStep[]
 }
 
+/// Single stage inside a flow (type + name + order); maps to scheduled `Interview` rows.
 model InterviewStep {
   id              Int           @id @default(autoincrement())
   interviewFlowId Int
@@ -131,6 +140,7 @@ model InterviewStep {
   @@index([interviewTypeId])
 }
 
+/// Job opening: links a company to one interview flow and accepts applications.
 model Position {
   id                  Int           @id @default(autoincrement())
   companyId           Int
@@ -187,6 +197,7 @@ model Application {
   @@index([status, candidateId])
 }
 
+/// Scheduled interview instance: one row per attempt at a step (`attempt` increments on retake).
 model Interview {
   id              Int           @id @default(autoincrement())
   applicationId   Int
