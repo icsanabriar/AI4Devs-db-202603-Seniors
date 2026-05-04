@@ -53,13 +53,13 @@
 
 ## Relationships (Prisma / ERD)
 
-- `Company` 1—* `Employee`, 1—* `Position`
+- `Company` 1—N `Employee`, 1—N `Position`
 - `Position` 1—1 `InterviewFlow` (enforced with `@unique` on `interviewFlowId` on `Position`)
-- `InterviewFlow` 1—* `InterviewStep`; `InterviewType` 1—* `InterviewStep`
-- `Position` 1—* `Application`; `Candidate` 1—* `Application` (`@@unique([positionId, candidateId])` — one application per pair)
-- `Application` 1—* `Interview`; `InterviewStep` 1—* `Interview`
-- `Employee` 1—* `Interview`
-- `Candidate` 1—* `Education` / `WorkExperience` / `Resume` (unchanged)
+- `InterviewFlow` 1—N `InterviewStep`; `InterviewType` 1—N `InterviewStep`
+- `Position` 1—N `Application`; `Candidate` 1—N `Application` (`@@unique([positionId, candidateId])` — one application per pair)
+- `Application` 1—N `Interview`; `InterviewStep` 1—N `Interview`
+- `Employee` 1—N `Interview`
+- `Candidate` 1—N `Education` / `WorkExperience` / `Resume` (unchanged)
 
 ## Normalization decisions
 

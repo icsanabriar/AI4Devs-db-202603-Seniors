@@ -32,10 +32,7 @@ paths:
                   description: Email address of the candidate
                   pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
                 phone:
-                  type: string
-                  description: Phone number (E.164 or common separators; aligns with Candidate.phone VARCHAR(32))
-                  maxLength: 32
-                  pattern: '^[()+. 0-9-]+$'
+                  $ref: '#/components/schemas/CandidatePhone'
                 address:
                   type: string
                   description: Address of the candidate
@@ -116,7 +113,7 @@ paths:
                   email:
                     type: string
                   phone:
-                    type: string
+                    $ref: '#/components/schemas/CandidatePhone'
                   address:
                     type: string
                   educations:
@@ -186,4 +183,17 @@ paths:
           description: Invalid file type, only PDF and DOCX are allowed
         '500':
           description: Error during the file upload process
+
+components:
+  schemas:
+    CandidatePhone:
+      type: string
+      description: |-
+        Optional. Empty string means “not provided” (matches server `validatePhone`).
+        If non-empty, must be Candidate.phone-compatible: max 32 chars, only phone punctuation
+        `[+().-]` and whitespace and digits (`validator.ts` PHONE_CHARS_REGEX).
+        Digit count after stripping non-digits must be between 7 and 15 inclusive (reject e.g.
+        "---", "+" or too few digits; reject 16+ digits).
+      maxLength: 32
+      pattern: "^(?:$|(?=(?:[^0-9]*[0-9]){7})(?!(?:[^0-9]*[0-9]){16})[+().\\-\\s0-9]{1,32})$"
 
