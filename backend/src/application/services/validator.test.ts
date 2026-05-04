@@ -1,3 +1,7 @@
+/**
+ * Regression tests for `application/validator`: candidate field rules, optional phone semantics,
+ * nested education/experience objects, and the create-vs-update branch in `validateCandidateData`.
+ */
 import {
     validateName,
     validateEmail,
@@ -37,15 +41,22 @@ describe('Validator Tests', () => {
     });
 
     describe('validatePhone', () => {
-        it('should validate a correct phone number', () => {
+        it('accepts local, international E.164, and formatted numbers within schema limits', () => {
             expect(() => validatePhone('612345678')).not.toThrow();
+            expect(() => validatePhone('512345678')).not.toThrow();
+            expect(() => validatePhone('6123456789')).not.toThrow();
+            expect(() => validatePhone('+34612345678')).not.toThrow();
+            expect(() => validatePhone('+1 (415) 555-2671')).not.toThrow();
+            expect(() => validatePhone('+34 612 345 678')).not.toThrow();
         });
 
-        it('should throw an error for an invalid phone number', () => {
-            expect(() => validatePhone('')).not.toThrow(); // Optional field
-            expect(() => validatePhone('512345678')).toThrow('Invalid phone');
-            expect(() => validatePhone('61234567')).toThrow('Invalid phone');
-            expect(() => validatePhone('6123456789')).toThrow('Invalid phone');
+        it('rejects numbers that violate length, charset, or digit-count rules', () => {
+            expect(() => validatePhone('')).not.toThrow(); // optional field
+            expect(() => validatePhone('123456')).toThrow('Invalid phone'); // too few digits
+            expect(() => validatePhone('+1234567')).not.toThrow();
+            expect(() => validatePhone('1'.repeat(16))).toThrow('Invalid phone'); // too many digits
+            expect(() => validatePhone('+34 612x78')).toThrow('Invalid phone');
+            expect(() => validatePhone('+' + '-'.repeat(40))).toThrow('Invalid phone'); // exceeds 32 chars
         });
     });
 

@@ -22,7 +22,7 @@
 | Observation | Detail |
 |-------------|--------|
 | **New tables** | `Company`, `Employee`, `InterviewType`, `InterviewFlow`, `InterviewStep`, `Position`, `Application`, `Interview` |
-| **Indexes added** | FK and query-oriented indexes (see [Indexes added](#indexes-added)) |
+| **Indexes added** | FK and query-oriented indexes (see [Indexes added](#indexes-added-with-justification)) |
 | **ERD + legacy** | `Candidate` retained and linked to `Application`; `Education` / `WorkExperience` / `Resume` **unchanged** in shape |
 
 ## Schema differences (current at start vs target ERD)
@@ -44,7 +44,7 @@
 - `InterviewStep` — `interviewFlowId`, `interviewTypeId`, `name`, `orderIndex` (unique with `interviewFlowId`)
 - `Position` — ERD field set + `Decimal(12,2)` salary range, `DATE` `applicationDeadline`, `TEXT` for long copy
 - `Application` — `positionId`, `candidateId`, `applicationDate` (date), `status`, `notes`, audit
-- `Interview` — `applicationId`, `interviewStepId`, `employeeId`, `interviewDate` (date), `result`, `score`, `notes`, audit
+- `Interview` — `applicationId`, `interviewStepId`, `attempt` (1-based per scheduled step retry), `employeeId`, `interviewDate` (date), `result`, `score`, `notes`, audit
 
 ## Models updated
 
@@ -83,7 +83,7 @@
 | `Application` on `positionId`, `candidateId`, `status` | Pipeline queries |
 | `Application_positionId_candidateId_key` (unique) | Enforce one application per candidate per position |
 | `Interview` on `applicationId`, `interviewStepId`, `employeeId`, `interviewDate` | Scheduling and joins |
-| `Interview_applicationId_interviewStepId_key` (unique) | At most one row per application per step (adjust if re-interviews on same step are required) |
+| `Interview_applicationId_interviewStepId_attempt_key` (unique) | One row per **`(applicationId, interviewStepId, attempt)`**; **`attempt`** increments on step retakes (replaces obsolete two-column unique) |
 | `Candidate_lastName_firstName_idx` | Directory-style search |
 | `Education` / `Resume` / `WorkExperience` on `candidateId` | **Backfill of missing FK support** on pre-existing child tables |
 
@@ -92,13 +92,13 @@
 ## Constraints added (FK, UNIQUE, NOT NULL)
 
 - **Foreign keys** on all new relations with `onDelete: Restrict` / `onUpdate: Cascade` to match the existing child-table style on `Candidate`.
-- **Uniques:** `Application(positionId, candidateId)`, `Interview(applicationId, interviewStepId)`, `InterviewStep(interviewFlowId, orderIndex)`, `Position(interviewFlowId)`, `InterviewType(name)`, `Employee(companyId, email)`.
+- **Uniques:** `Application(positionId, candidateId)`, `Interview(applicationId, interviewStepId, attempt)`, `InterviewStep(interviewFlowId, orderIndex)`, `Position(interviewFlowId)`, `InterviewType(name)`, `Employee(companyId, email)`.
 - **NOT NULL:** Required scalar fields for new tables as in Prisma; optional long-form / salary fields left nullable to avoid backfill for empty networks.
 
 ## Migration risks (locks, rewrites, large tables)
 
 - **This rollout:** only **new** `CREATE TABLE` and **new** `CREATE INDEX` on **new** data (empty) plus `CREATE INDEX` on **small, low-row** `Candidate` children. No `NOT NULL` added to old columns, no table drops, no blocking full rewrites of large tables.
-- **If `Candidate` or children grow large before similar index work:** prefer `CREATE INDEX CONCURRENTLY` in a hand-authored migration (see [Manual SQL](#manual-sql)), outside Prisma’s default single-transaction migration for that step.
+- **If `Candidate` or children grow large before similar index work:** prefer `CREATE INDEX CONCURRENTLY` in a hand-authored migration (see [Manual SQL](#manual-sql-postgresql-specific)), outside Prisma’s default single-transaction migration for that step.
 
 ## Backfill plan
 
@@ -116,6 +116,8 @@
 
   Use one of: **(1)** a hand-authored migration that Prisma is configured to run **without** a transaction (for PostgreSQL this is a documented, opt-in no-transaction / non-transactional migration mode), **(2)** the same SQL executed **manually** (e.g. `psql` or an ops job) **outside** `prisma migrate`, or **(3)** a separate ops playbook while keeping schema truth aligned with a follow-up migration if needed. Do not treat `CONCURRENTLY` as a drop-in for routine `prisma migrate dev` output.
 
+  **Companion migration SQL:** PostgreSQL DDL after the baseline ERD (including **`Interview.attempt`**, rewriting the Interview composite unique index to **`(applicationId, interviewStepId, attempt)`**, **`Application`** list indexes and status **`CHECK`**, **`pg_trgm`**, refreshable materialized views) lives in **`backend/prisma/migrations/20260427112000_audit_improvements/migration.sql`** — read that file when reconciling transactional limits with DDL here.
+
   ```sql
   -- This form is invalid inside Prisma’s default transactional migration. See warning above.
   CREATE INDEX CONCURRENTLY IF NOT EXISTS "MyTable_fkField_idx" ON "MyTable" ("fkField");
@@ -129,6 +131,8 @@
 
 1. **Application-level:** deploy previous app binary that does not use new tables.  
 2. **Database (reverse of migrations, last applied first):**  
+   - `20260427120100_widen_candidate_phone_address` — widens **`Candidate.phone`** / **`address`** and recreates **`Candidate_phone_trgm_idx`** (see **`migration.sql`**); reversing requires a deliberate down-migration.  
+   - `20260427112000_audit_improvements` — adds **`Interview.attempt`**, redefines the Interview unique constraint, aggregates, **`pg_trgm`** on **`Candidate.phone`**, and related DDL (see **`migration.sql`**); reverse with hand-authored SQL aligned to those objects.  
    - `20260427005517_drop_redundant_position_interviewflow_index` — re-creating a non-unique `Position_interviewFlowId` index is optional; usually just leave as-is.  
    - `20260427005500_erd_alignment_postgres` — **only if** no production data: `DROP TABLE` in child-before-parent order: `Interview`, `Application`, `Position`, `InterviewStep`, `Employee`, `InterviewType`, `InterviewFlow`, `Company`, then `DROP INDEX` for added indexes on `Candidate` / child tables; **in production with data, use a controlled migration, not a blind drop.**  
 3. **Prisma:** `prisma migrate resolve` to mark rolled-back migrations in `_prisma_migrations` if you hand-apply rollbacks to match a branch.
@@ -140,7 +144,7 @@
 - [x] `npx prisma format` (after schema edits)  
 - [x] `npx prisma validate` (with `DATABASE_URL` set)  
 - [x] `npx prisma generate`  
-- [x] `npx prisma migrate dev --name erd-alignment-postgres` (and follow-up for redundant index)  
+- [x] `npx prisma migrate dev` (baseline ERD, redundant-index drop, **`20260427112000_audit_improvements`**, **`20260427120100_widen_candidate_phone_address`**) — see `backend/prisma/migrations/`  
 - [ ] Re-run with CI `DATABASE_URL` pointing to the same DB or a copy  
 - [ ] Load seed data for one company, flow, position, and application, then run integration tests when API exists    
 
@@ -151,3 +155,5 @@
 | `backend/prisma/migrations/` | `20260425025907_setup` (initial) |
 | `backend/prisma/migrations/` | `20260427005500_erd_alignment_postgres` (ERD tables + indexes + FKs) |
 | `backend/prisma/migrations/` | `20260427005517_drop_redundant_position_interviewflow_index` |
+| `backend/prisma/migrations/` | `20260427112000_audit_improvements` — authoritative DDL **`migration.sql`**: `Interview.attempt` + unique **`Interview_applicationId_interviewStepId_attempt_key`**, **`Application`** indexes / status **`CHECK`**, **`pg_trgm`** on **`Candidate.phone`**, materialized views (`ApplicationStatusSummary`, `CompanyApplicationCount`) |
+| `backend/prisma/migrations/` | `20260427120100_widen_candidate_phone_address` — widen **`Candidate.phone`** / **`address`** (**`migration.sql`**); drops & rebuilds **`Candidate_phone_trgm_idx`** |

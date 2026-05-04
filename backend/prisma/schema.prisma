@@ -1,5 +1,6 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Recruitment ATS PostgreSQL schema: candidates, companies, interview flows/steps, applications, interviews.
+// Evolution history: prisma/migrations/; domain reference: docs/ERD.md
+// Prisma docs: https://pris.ly/d/prisma-schema
 
 generator client {
   provider      = "prisma-client-js"
@@ -205,9 +206,12 @@ model Interview {
   interviewStepId Int
   interviewStep   InterviewStep @relation(fields: [interviewStepId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   /// 1-based attempt per (application, step). Retakes = a new row with a higher `attempt`.
-  /// `@@default(1)` does not choose the next value on retake: callers MUST set `attempt` to
-  /// max(existing for this `applicationId` + `interviewStepId`) + 1 (see
-  /// `getNextInterviewAttempt` in the backend) or inserts will hit P2002 on the unique.
+  /// `@@default(1)` does not choose the next value on retake: set `attempt` to
+  /// max(existing for this `applicationId` + `interviewStepId`) + 1. For single-row creates,
+  /// call `createInterviewWithNextAttempt`; for batched `createMany`, use
+  /// `createBatchInterviewAttemptAllocator` (seed) so MAX+1 races cannot violate
+  /// @@unique([applicationId, interviewStepId, attempt]). `getNextInterviewAttempt` alone is
+  /// only safe as a read helper inside those flows (or inside a retried transaction).
   attempt         Int           @default(1)
   employeeId      Int
   employee        Employee      @relation(fields: [employeeId], references: [id], onDelete: Restrict, onUpdate: Cascade)

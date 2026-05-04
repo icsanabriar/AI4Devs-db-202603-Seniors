@@ -1,10 +1,13 @@
 /**
  * Realistic, tiered test data for performance / validation runs.
  * Run:  SEED_TIER=small|medium|large  npx prisma db seed
- * Env:  DATABASE_URL (full URL) or root .env DB_USER/DB_PASSWORD/DB_NAME/DB_PORT
+ * Env:  DATABASE_URL (full URL) or root .env DB_USER/DB_PASSWORD/DB_HOST/DB_NAME/DB_PORT
+ *       (DATABASE_HOST is still read as fallback for host if DB_HOST is unset)
  */
 import { PrismaClient, Prisma } from "@prisma/client";
-import { getNextInterviewAttempt } from "../src/application/services/getNextInterviewAttempt";
+import {
+  createBatchInterviewAttemptAllocator,
+} from "../src/application/services/getNextInterviewAttempt";
 import { config } from "dotenv";
 import * as path from "path";
 import * as fs from "fs";
@@ -17,7 +20,12 @@ if (fs.existsSync(rootEnv)) {
 
 const rawUrl = process.env.DATABASE_URL ?? "";
 if (rawUrl.includes("${") && process.env.DB_USER) {
-  process.env.DATABASE_URL = `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DATABASE_HOST || "localhost"}:${process.env.DB_PORT || "5432"}/${process.env.DB_NAME}`;
+  const user = encodeURIComponent(process.env.DB_USER);
+  const password = encodeURIComponent(process.env.DB_PASSWORD ?? "");
+  const host = process.env.DB_HOST ?? process.env.DATABASE_HOST ?? "localhost";
+  const port = process.env.DB_PORT ?? "5432";
+  const dbName = process.env.DB_NAME ?? "";
+  process.env.DATABASE_URL = `postgresql://${user}:${password}@${host}:${port}/${dbName}`;
 }
 
 const prisma = new PrismaClient();
@@ -104,7 +112,8 @@ function pickn<T>(arr: T[], n: number) {
 
 /**
  * Orchestrates tiered seeding: interview types, companies (batched), candidates, applications,
- * and first-step interviews using {@link getNextInterviewAttempt} for valid `attempt` values.
+ * and first-step interviews use {@link createBatchInterviewAttemptAllocator} so `attempt`
+ * values remain unique across bulk inserts even when aggregates would race concurrent writers.
  * Refreshes materialized views when present; failures there are logged and ignored.
  */
 async function main() {
@@ -344,6 +353,15 @@ async function main() {
     score: number;
   }[] = [];
 
+  const plannedInterviews: {
+    applicationId: number;
+    interviewStepId: number;
+    employeeId: number;
+    interviewDate: Date;
+    result: string;
+    score: number;
+  }[] = [];
+
   for (const app of applications) {
     if (rand() > spec.shareWithInterview) continue;
     const meta = posById.get(app.positionId);
@@ -351,19 +369,21 @@ async function main() {
     const emps = companyEmployeeIds.get(meta.companyId) ?? [];
     if (emps.length === 0) continue;
     const employeeId = emps[Math.floor(rand() * emps.length)]!;
-    const attempt = await getNextInterviewAttempt(
-      prisma,
-      app.id,
-      meta.firstStepId
-    );
-    interviewRows.push({
+    plannedInterviews.push({
       applicationId: app.id,
       interviewStepId: meta.firstStepId,
-      attempt,
       employeeId,
       interviewDate: new Date(2025, 6 + (app.id % 4), 5 + (app.id % 20)),
       result: pickn(["strong_hire", "hire", "no_hire", "pending"], 1)[0]!,
       score: 40 + Math.floor(rand() * 60),
+    });
+  }
+
+  const { next: nextAttempt } = await createBatchInterviewAttemptAllocator(prisma, plannedInterviews);
+  for (const row of plannedInterviews) {
+    interviewRows.push({
+      ...row,
+      attempt: nextAttempt(row.applicationId, row.interviewStepId),
     });
   }
 
